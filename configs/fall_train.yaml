@@ -1,0 +1,29 @@
+task: fall
+
+model:
+  input_type: frames
+  feature_dim: 512
+  resnet_name: resnet18
+  resnet_pretrained: false
+  temporal_dim: 256
+  ms_kernel_sizes: [3, 5, 7]
+  ms_dilations: [1, 2, 3]
+  dropout: 0.1
+
+data:
+  dataset: fall_seg
+  manifest_train: data/fall/train.jsonl
+  manifest_val: data/fall/val.jsonl
+  clip_len: 128
+  random_start: true
+  input_type: frames
+  seed: 0
+
+training:
+  batch_size: 4
+  epochs: 20
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_workers: 4
+  device: cuda
+  save_dir: outputs/fall

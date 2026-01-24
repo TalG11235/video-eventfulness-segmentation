@@ -1,29 +1,35 @@
+import bisect
 import random
+
 from torch.utils.data import Dataset
 
+
 class MultiDataset(Dataset):
-    """
-    Samples from multiple datasets. Supports:
-      - round-robin (deterministic)
-      - weighted random (recommended)
-    """
-    def __init__(self, datasets, weights=None, mode="weighted"):
+    def __init__(self, datasets, weights=None, seed: int = 0):
+        if not datasets:
+            raise ValueError("datasets must be non-empty")
         self.datasets = datasets
-        self.mode = mode
-        self.weights = weights or [1.0] * len(datasets)
-        self.lengths = [len(d) for d in datasets]
-        self.total = sum(self.lengths)
+        if weights is None:
+            weights = [1.0] * len(datasets)
+        if len(weights) != len(datasets):
+            raise ValueError("weights must match datasets length")
+        total = sum(weights)
+        self.weights = [w / total for w in weights]
+        self.rng = random.Random(seed)
+        self._length = sum(len(ds) for ds in datasets)
+        self._cumulative = []
+        acc = 0.0
+        for w in self.weights:
+            acc += w
+            self._cumulative.append(acc)
 
     def __len__(self):
-        return self.total
+        return self._length
 
     def __getitem__(self, idx):
-        if self.mode == "round_robin":
-            d_idx = idx % len(self.datasets)
-            local = (idx // len(self.datasets)) % len(self.datasets[d_idx])
-            return self.datasets[d_idx][local]
-
-        # weighted random
-        d_idx = random.choices(range(len(self.datasets)), weights=self.weights, k=1)[0]
-        local = random.randint(0, len(self.datasets[d_idx]) - 1)
-        return self.datasets[d_idx][local]
+        _ = idx  # draw stochastically by weight
+        r = self.rng.random()
+        ds_idx = bisect.bisect_left(self._cumulative, r)
+        ds = self.datasets[ds_idx]
+        sample_idx = self.rng.randrange(len(ds))
+        return ds[sample_idx]

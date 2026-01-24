@@ -1,15 +1,25 @@
 from torch.utils.data import DataLoader
-# from src.data.datasets.my_dataset import MyDataset
+
+from src.data import get_dataset
+
 
 def main():
-    ds = MyDataset(T=32, image_size=224, stride=1, random_start=True)
-    dl = DataLoader(ds, batch_size=4, shuffle=True, num_workers=0)
+    ds = get_dataset(
+        "ddtr_logs",
+        manifest_path="data/ddtr/train.jsonl",
+        clip_len=32,
+        random_start=True,
+        input_type="frames",
+        seed=0,
+    )
+    dl = DataLoader(ds, batch_size=2, shuffle=True, num_workers=0)
 
     batch = next(iter(dl))
-    print(batch["frames"].shape)  # [B,T,3,H,W]
+    print(batch["inputs"].shape)  # [B,T,C,H,W] or [B,T,D]
     print(batch["labels"].shape)  # [B,T]
     print(batch["mask"].shape)    # [B,T]
     print(batch["labels"][0][:10], batch["mask"][0][:10])
+
 
 if __name__ == "__main__":
     main()
