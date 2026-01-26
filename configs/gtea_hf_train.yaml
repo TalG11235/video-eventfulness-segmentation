@@ -1,0 +1,25 @@
+task: gtea_hf
+
+model:
+  input_type: features
+  feature_dim: 1024  # GTEA HF uses 1024-dim features
+  temporal_dim: 256
+  ms_kernel_sizes: [3, 5, 7]
+  ms_dilations: [1, 2, 3]
+  dropout: 0.1
+
+data:
+  dataset: gtea_hf
+  clip_len: 128
+  random_start: true
+  input_type: features
+  seed: 0
+
+training:
+  batch_size: 8
+  epochs: 50
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_workers: 4
+  device: cuda
+  save_dir: outputs/gtea_hf

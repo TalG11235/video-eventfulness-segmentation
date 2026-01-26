@@ -19,17 +19,36 @@ def load_config(path: str) -> dict:
 
 def build_loader(cfg: dict, split: str):
     data_cfg = cfg["data"]
-    manifest_key = f"manifest_{split}"
-    if manifest_key not in data_cfg:
-        return None
-    ds = get_dataset(
-        data_cfg["dataset"],
-        manifest_path=data_cfg[manifest_key],
-        clip_len=data_cfg["clip_len"],
-        random_start=data_cfg.get("random_start", True) if split == "train" else False,
-        input_type=data_cfg["input_type"],
-        seed=data_cfg.get("seed", 0),
-    )
+    dataset_name = data_cfg["dataset"]
+    
+    # Handle datasets with different initialization signatures
+    if dataset_name == "gtea_hf":
+        # GTEA HF uses cross-validation splits instead of manifest files
+        cv_split = data_cfg.get("cv_split", 1)
+        ds = get_dataset(
+            dataset_name,
+            split=split,
+            cv_split=cv_split,
+            T=data_cfg["clip_len"],
+            random_start=data_cfg.get("random_start", True) if split == "train" else False,
+            binary=data_cfg.get("binary", True),
+            bg_id=data_cfg.get("bg_id", 0),
+            seed=data_cfg.get("seed", 0),
+        )
+    else:
+        # Manifest-based datasets (ddtr_logs, fall_seg)
+        manifest_key = f"manifest_{split}"
+        if manifest_key not in data_cfg:
+            return None
+        ds = get_dataset(
+            dataset_name,
+            manifest_path=data_cfg[manifest_key],
+            clip_len=data_cfg["clip_len"],
+            random_start=data_cfg.get("random_start", True) if split == "train" else False,
+            input_type=data_cfg["input_type"],
+            seed=data_cfg.get("seed", 0),
+        )
+    
     return DataLoader(
         ds,
         batch_size=cfg["training"]["batch_size"],
@@ -78,7 +97,14 @@ def run_epoch(model, loader, task, optimizer=None, device="cpu"):
     total_batches = 0
 
     for batch in loader:
-        inputs = batch["inputs"].to(device)
+        # Handle different batch formats
+        if "inputs" in batch:
+            inputs = batch["inputs"].to(device)
+        elif "features" in batch:
+            inputs = batch["features"].to(device)
+        else:
+            raise KeyError("Batch must contain either 'inputs' or 'features'")
+        
         labels = batch["labels"].to(device)
         mask = batch["mask"].to(device)
 
@@ -87,6 +113,7 @@ def run_epoch(model, loader, task, optimizer=None, device="cpu"):
             loss = ddtr_loss(logits, labels, mask)
             acc = ddtr_accuracy(logits, labels, mask)
         else:
+            # fall and gtea_hf are both binary segmentation tasks
             loss = fall_loss(logits, labels, mask)
             acc = fall_accuracy(logits, labels, mask)
 
@@ -125,7 +152,13 @@ def main():
 
     cfg = load_config(args.config)
 
-    device = torch.device(cfg["training"].get("device", "cpu"))
+    # Set device, falling back to CPU if CUDA is not available
+    device_str = cfg["training"].get("device", "cpu")
+    if device_str == "cuda" and not torch.cuda.is_available():
+        print("CUDA not available, falling back to CPU")
+        device = torch.device("cpu")
+    else:
+        device = torch.device(device_str)
 
     model_cfg = cfg["model"]
     model = EventSegmentationModel(

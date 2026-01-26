@@ -22,7 +22,7 @@ class EventSegmentationModel(nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
-        if task not in {"ddtr", "fall"}:
+        if task not in {"ddtr", "fall", "gtea_hf"}:
             raise ValueError(f"Unknown task: {task}")
         if input_type not in {"frames", "features"}:
             raise ValueError(f"Unknown input_type: {input_type}")
@@ -55,6 +55,7 @@ class EventSegmentationModel(nn.Module):
                 raise ValueError("num_actions is required for ddtr task")
             self.head = DDTRActionHead(temporal_dim, num_actions, dropout=dropout)
         else:
+            # fall and gtea_hf are both binary segmentation tasks
             self.head = FallSegHead(temporal_dim, dropout=dropout)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
