@@ -2,22 +2,30 @@ import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from datasets import load_dataset
+
+try:
+    from datasets import load_dataset
+    HAS_DATASETS = True
+except ImportError:
+    HAS_DATASETS = False
 
 IGNORE_INDEX = -100
 
 class GTEAHFFeatureDataset(Dataset):
     def __init__(
         self,
-        split: str,          # "train" or "test"
+        split: str,          # "train", "test", or "val" (val maps to test)
         cv_split: int = 1,   # 1..4  (name="split{cv_split}")
         T: int = 128,
         random_start: bool = True,
         binary: bool = True,
         bg_id: int = 0,
         seed: int = 0,
-        trust_remote_code: bool = True,  # because dataset uses a loading script
     ):
+        # Map "val" to "test" since GTEA only has train/test splits
+        if split == "val":
+            split = "test"
+        
         assert split in {"train", "test"}
         self.T = T
         self.random_start = random_start
@@ -25,12 +33,36 @@ class GTEAHFFeatureDataset(Dataset):
         self.bg_id = bg_id
         self.rng = random.Random(seed)
 
-        ds = load_dataset(
-            "dinggd/gtea",
-            name=f"split{cv_split}",
-            trust_remote_code=trust_remote_code,
-        )
-        self.ds = ds[split]
+        # Try to load from HuggingFace with fallback
+        try:
+            # Try with trust_remote_code for older datasets versions
+            ds = load_dataset(
+                "dinggd/gtea",
+                name=f"split{cv_split}",
+                trust_remote_code=True,
+            )
+            self.ds = ds[split]
+        except Exception as e1:
+            # If that fails, try without trust_remote_code
+            try:
+                ds = load_dataset(
+                    "dinggd/gtea",
+                    name=f"split{cv_split}",
+                )
+                self.ds = ds[split]
+            except Exception as e2:
+                raise RuntimeError(
+                    f"Failed to load GTEA dataset. The HuggingFace dataset 'dinggd/gtea' "
+                    f"uses a deprecated loading script format.\n"
+                    f"Error 1 (with trust_remote_code): {e1}\n"
+                    f"Error 2 (without trust_remote_code): {e2}\n\n"
+                    f"Try installing an older version of datasets:\n"
+                    f"  pip install 'datasets==2.14.7'\n"
+                    f"Or contact the dataset author to convert to standard Parquet format."
+                ) from e2
+        
+        # Set format to python to avoid PyArrow formatting issues
+        self.ds.set_format("python")
 
     def __len__(self):
         return len(self.ds)

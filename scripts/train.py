@@ -35,6 +35,19 @@ def build_loader(cfg: dict, split: str):
             bg_id=data_cfg.get("bg_id", 0),
             seed=data_cfg.get("seed", 0),
         )
+    elif dataset_name == "fall_detection":
+        # Fall detection uses manifest files, supports both features and frames
+        manifest_key = f"manifest_{split}"
+        if manifest_key not in data_cfg:
+            return None
+        ds = get_dataset(
+            dataset_name,
+            manifest_path=data_cfg[manifest_key],
+            clip_len=data_cfg["clip_len"],
+            random_start=data_cfg.get("random_start", True) if split == "train" else False,
+            input_type=data_cfg["input_type"],
+            seed=data_cfg.get("seed", 0),
+        )
     else:
         # Manifest-based datasets (ddtr_logs, fall_seg)
         manifest_key = f"manifest_{split}"
@@ -48,6 +61,14 @@ def build_loader(cfg: dict, split: str):
             input_type=data_cfg["input_type"],
             seed=data_cfg.get("seed", 0),
         )
+    
+    return DataLoader(
+        ds,
+        batch_size=cfg["training"]["batch_size"],
+        shuffle=split == "train",
+        num_workers=cfg["training"].get("num_workers", 0),
+        pin_memory=True,
+    )
     
     return DataLoader(
         ds,
@@ -113,7 +134,7 @@ def run_epoch(model, loader, task, optimizer=None, device="cpu"):
             loss = ddtr_loss(logits, labels, mask)
             acc = ddtr_accuracy(logits, labels, mask)
         else:
-            # fall and gtea_hf are both binary segmentation tasks
+            # fall, gtea_hf, and fall_detection are all binary segmentation tasks
             loss = fall_loss(logits, labels, mask)
             acc = fall_accuracy(logits, labels, mask)
 
