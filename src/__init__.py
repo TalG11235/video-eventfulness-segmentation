@@ -1,1 +1,1 @@
-__all__ = []
+"""Core package for video eventfulness segmentation."""
