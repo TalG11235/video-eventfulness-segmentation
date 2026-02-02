@@ -7,7 +7,13 @@ from torch.utils.data import Dataset
 
 
 class VideoDataset(Dataset):
-    def __init__(self, manifest_path: str, input_type: str):
+    def __init__(
+        self,
+        manifest_path: str,
+        input_type: str,
+        feature_dim: int | None = None,
+        with_labels: bool = False,
+    ):
         if input_type not in {"frames", "features"}:
             raise ValueError(f"Unknown input_type: {input_type}")
 
@@ -15,6 +21,8 @@ class VideoDataset(Dataset):
         if not self.manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
         self.input_type = input_type
+        self.feature_dim = feature_dim
+        self.with_labels = with_labels
 
         self.items = []
         with self.manifest_path.open("r", encoding="utf-8") as handle:
@@ -42,31 +50,56 @@ class VideoDataset(Dataset):
             key = "features_path"
         if key not in item:
             raise KeyError(f"Missing {key} in manifest entry")
-        return self._load_array(item[key]).astype(np.float32)
+        arr = self._load_array(item[key]).astype(np.float32)
+        if self.input_type == "features" and arr.ndim == 2 and self.feature_dim is not None:
+            if arr.shape[0] == self.feature_dim and arr.shape[1] != self.feature_dim:
+                arr = arr.T
+            elif arr.shape[1] != self.feature_dim:
+                raise ValueError(
+                    f"Feature dim mismatch for {item[key]}: got {arr.shape}, "
+                    f"expected feature_dim={self.feature_dim}"
+                )
+        return arr
+
+    def _load_labels(self, item):
+        if "labels_path" not in item:
+            raise KeyError("Missing labels_path in manifest entry")
+        arr = self._load_array(item["labels_path"]).astype(np.int64)
+        if arr.ndim != 1:
+            raise ValueError(f"Labels must be 1D, got {arr.shape} for {item['labels_path']}")
+        return arr
 
     def __getitem__(self, idx):
         item = self.items[idx]
         inputs = self._load_inputs(item)
-        return {
+        output = {
             "inputs": torch.from_numpy(inputs),
             "meta": {
                 "video_id": item.get("video_id", str(idx)),
             },
         }
+        if self.with_labels or "labels_path" in item:
+            labels = self._load_labels(item)
+            output["labels"] = torch.from_numpy(labels)
+        return output
 
 
 def pad_collate(batch):
     lengths = [item["inputs"].shape[0] for item in batch]
     max_len = max(lengths) if lengths else 0
     video_ids = [item["meta"]["video_id"] for item in batch]
+    has_labels = bool(batch) and "labels" in batch[0]
 
     if not batch:
-        return {
+        output = {
             "inputs": torch.empty(0),
             "mask": torch.empty(0, dtype=torch.bool),
             "lengths": torch.empty(0, dtype=torch.long),
             "video_ids": [],
         }
+        if has_labels:
+            output["labels"] = torch.empty(0, dtype=torch.long)
+        return output
 
     first = batch[0]["inputs"]
     dims = first.dim()
@@ -80,16 +113,27 @@ def pad_collate(batch):
         raise ValueError(f"Unsupported input dims: {dims}")
 
     mask = torch.zeros((len(batch), max_len), dtype=torch.bool)
+    labels = None
+    if has_labels:
+        labels = torch.full((len(batch), max_len), -100, dtype=torch.long)
 
     for i, item in enumerate(batch):
         inp = item["inputs"]
         t = inp.shape[0]
         padded[i, :t] = inp
         mask[i, :t] = True
+        if has_labels:
+            lab = item["labels"]
+            if lab.shape[0] != t:
+                raise ValueError(f"Label length {lab.shape[0]} != input length {t}")
+            labels[i, :t] = lab
 
-    return {
+    output = {
         "inputs": padded,
         "mask": mask,
         "lengths": torch.tensor(lengths, dtype=torch.long),
         "video_ids": video_ids,
     }
+    if has_labels:
+        output["labels"] = labels
+    return output

@@ -145,7 +145,11 @@ def main():
         manifest_path = input_path
         input_type = data_cfg.get("input_type", model_cfg.get("input_type", "features"))
 
-    dataset = VideoDataset(str(manifest_path), input_type=input_type)
+    dataset = VideoDataset(
+        str(manifest_path),
+        input_type=input_type,
+        feature_dim=model_cfg.get("feature_dim"),
+    )
     loader = DataLoader(
         dataset,
         batch_size=data_cfg.get("batch_size", 1),
