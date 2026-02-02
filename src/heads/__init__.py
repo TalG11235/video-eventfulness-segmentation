@@ -1,3 +1,3 @@
-from .ddtr_log_head import DDTRLogHead
+from .ddtr_log_head import MSTCNHead
 
-__all__ = ["DDTRLogHead"]
+__all__ = ["MSTCNHead"]

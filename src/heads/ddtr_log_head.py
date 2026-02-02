@@ -2,16 +2,15 @@ import torch
 from torch import nn
 
 
-class DDTRLogHead(nn.Module):
-    def __init__(self, in_dim: int, num_actions: int, dropout: float = 0.1):
+class MSTCNHead(nn.Module):
+    def __init__(self, num_stages: int = 4):
         super().__init__()
-        self.dropout = nn.Dropout(dropout)
-        self.classifier = nn.Linear(in_dim, num_actions)
+        self.num_stages = num_stages
 
-    def forward(self, feats: torch.Tensor) -> torch.Tensor:
-        # feats: [B, T, D]
-        x = self.dropout(feats)
-        return self.classifier(x)  # logits [B, T, A]
+    def forward(self, stage_outputs: torch.Tensor) -> torch.Tensor:
+        # stage_outputs: [num_stages, B, num_classes, T]
+        # Return the final stage output: [B, T, num_classes]
+        return stage_outputs[-1].transpose(1, 2)  # [B, num_classes, T] -> [B, T, num_classes]
 
     @staticmethod
     def logits_to_probs(logits: torch.Tensor) -> torch.Tensor:

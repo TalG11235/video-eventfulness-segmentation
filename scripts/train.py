@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -12,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.backbones import TemporalBackbone
 from src.datasets import VideoDataset, pad_collate
-from src.heads import DDTRLogHead
+from src.heads import MSTCNHead
 from src.utils import load_config
 
 
@@ -25,6 +26,9 @@ class DDTRTrainModel(nn.Module):
         num_actions: int,
         kernel_sizes=(3, 5, 7),
         dilations=(1, 2, 3),
+        num_stages: int = 4,
+        num_layers: int = 10,
+        num_f_maps: int = 64,
         dropout: float = 0.1,
         resnet_name: str = "resnet18",
         resnet_pretrained: bool = False,
@@ -39,12 +43,18 @@ class DDTRTrainModel(nn.Module):
             dropout=dropout,
             resnet_name=resnet_name,
             resnet_pretrained=resnet_pretrained,
+            num_stages=num_stages,
+            num_layers=num_layers,
+            num_f_maps=num_f_maps,
         )
-        self.head = DDTRLogHead(temporal_dim, num_actions, dropout=dropout)
+        self.head = MSTCNHead(num_stages=num_stages)
+        self.num_stages = num_stages
+        self.num_actions = num_actions
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        feats = self.backbone(inputs)
-        return self.head(feats)
+    def forward(self, inputs: torch.Tensor) -> tuple:
+        stage_outputs = self.backbone(inputs)
+        final_logits = self.head(stage_outputs)
+        return final_logits, stage_outputs
 
 
 def _get_device(device_str: str) -> torch.device:
@@ -64,6 +74,9 @@ def _build_loader(cfg: dict, split: str):
         input_type=data_cfg["input_type"],
         feature_dim=cfg["model"]["feature_dim"],
         with_labels=True,
+        normalize_features=data_cfg.get("normalize_features", False),
+        feature_mean=data_cfg.get("feature_mean"),
+        feature_std=data_cfg.get("feature_std"),
     )
     return DataLoader(
         dataset,
@@ -75,13 +88,32 @@ def _build_loader(cfg: dict, split: str):
     )
 
 
-def _ddtr_loss(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    b, t, a = logits.shape
-    logits = logits.view(b * t, a)
-    labels = labels.view(b * t)
-    mask = mask.view(b * t)
-    labels = labels.masked_fill(~mask, -100)
-    return nn.CrossEntropyLoss(ignore_index=-100)(logits, labels)
+def _ddtr_loss(stage_outputs: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    # stage_outputs: [num_stages, B, num_classes, T]
+    num_stages, b, a, t = stage_outputs.shape
+    
+    # Transpose to [num_stages, B, T, num_classes] for CrossEntropy
+    stage_outputs = stage_outputs.transpose(2, 3)  # [num_stages, B, T, num_classes]
+    
+    # Flatten batch and time dimensions
+    stage_outputs = stage_outputs.reshape(num_stages * b * t, a)
+    targets_expanded = targets.unsqueeze(0).expand(num_stages, -1, -1).reshape(num_stages * b * t)
+    mask_expanded = mask.unsqueeze(0).expand(num_stages, -1, -1).reshape(num_stages * b * t)
+    
+    targets_expanded = targets_expanded.masked_fill(~mask_expanded, -100)
+    
+    ce_loss = nn.CrossEntropyLoss(ignore_index=-100)(stage_outputs, targets_expanded)
+    
+    # Add smoothing loss between consecutive predictions
+    smoothing_loss = 0.0
+    mse = nn.MSELoss(reduction='none')
+    for i in range(num_stages - 1):
+        pred_curr = F.log_softmax(stage_outputs[i * b * t:(i + 1) * b * t], dim=-1)
+        pred_next = F.log_softmax(stage_outputs[(i + 1) * b * t:(i + 2) * b * t], dim=-1)
+        smoothing_loss += torch.mean(torch.clamp(mse(pred_curr, pred_next), min=0, max=16) * mask_expanded[i * b * t:(i + 1) * b * t].unsqueeze(-1))
+    
+    total_loss = ce_loss + 0.15 * smoothing_loss
+    return total_loss
 
 
 def _ddtr_accuracy(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -181,8 +213,8 @@ def _run_epoch(model, loader, optimizer, device, compute_tas_metrics=False):
         labels = batch["labels"].to(device)
         mask = batch["mask"].to(device)
 
-        logits = model(inputs)
-        loss = _ddtr_loss(logits, labels, mask)
+        logits, stage_outputs = model(inputs)
+        loss = _ddtr_loss(stage_outputs, labels, mask)
         acc = _ddtr_accuracy(logits, labels, mask)
 
         if is_train:
@@ -252,6 +284,7 @@ def main():
         num_actions=model_cfg["num_actions"],
         kernel_sizes=tuple(model_cfg.get("ms_kernel_sizes", [3, 5, 7])),
         dilations=tuple(model_cfg.get("ms_dilations", [1, 2, 3])),
+        num_stages=model_cfg.get("num_stages", 4),
         dropout=model_cfg.get("dropout", 0.1),
         resnet_name=model_cfg.get("resnet_name", "resnet18"),
         resnet_pretrained=model_cfg.get("resnet_pretrained", False),
@@ -265,6 +298,9 @@ def main():
         lr=cfg.get("training", {}).get("lr", 1e-4),
         weight_decay=cfg.get("training", {}).get("weight_decay", 1e-4),
     )
+
+    # Add learning rate scheduler
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=25, gamma=0.1)
 
     out_dir = Path(cfg.get("training", {}).get("save_dir", "outputs/train"))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -315,6 +351,9 @@ def main():
                 _save_checkpoint(model, optimizer, epoch, val_metrics, out_dir / "best.pt")
 
         _save_checkpoint(model, optimizer, epoch, train_metrics, out_dir / "last.pt")
+        
+        # Step the learning rate scheduler
+        # scheduler.step()
 
 
 if __name__ == "__main__":

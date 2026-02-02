@@ -13,6 +13,9 @@ class VideoDataset(Dataset):
         input_type: str,
         feature_dim: int | None = None,
         with_labels: bool = False,
+        normalize_features: bool = False,
+        feature_mean: float | None = None,
+        feature_std: float | None = None,
     ):
         if input_type not in {"frames", "features"}:
             raise ValueError(f"Unknown input_type: {input_type}")
@@ -23,6 +26,9 @@ class VideoDataset(Dataset):
         self.input_type = input_type
         self.feature_dim = feature_dim
         self.with_labels = with_labels
+        self.normalize_features = normalize_features
+        self.feature_mean = feature_mean
+        self.feature_std = feature_std
 
         self.items = []
         with self.manifest_path.open("r", encoding="utf-8") as handle:
@@ -59,6 +65,10 @@ class VideoDataset(Dataset):
                     f"Feature dim mismatch for {item[key]}: got {arr.shape}, "
                     f"expected feature_dim={self.feature_dim}"
                 )
+        # Apply feature normalization if enabled
+        if self.normalize_features and self.input_type == "features":
+            if self.feature_mean is not None and self.feature_std is not None:
+                arr = (arr - self.feature_mean) / self.feature_std
         return arr
 
     def _load_labels(self, item):

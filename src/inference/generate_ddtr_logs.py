@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from src.backbones import TemporalBackbone
 from src.datasets import VideoDataset, pad_collate
-from src.heads import DDTRLogHead
+from src.heads import MSTCNHead
 from src.utils import load_config, load_pickle, save_pickle
 
 
@@ -22,6 +22,9 @@ class DDTRLogGenerator(nn.Module):
         num_actions: int,
         kernel_sizes=(3, 5, 7),
         dilations=(1, 2, 3),
+        num_stages: int = 4,
+        num_layers: int = 10,
+        num_f_maps: int = 64,
         dropout: float = 0.1,
         resnet_name: str = "resnet18",
         resnet_pretrained: bool = False,
@@ -36,12 +39,15 @@ class DDTRLogGenerator(nn.Module):
             dropout=dropout,
             resnet_name=resnet_name,
             resnet_pretrained=resnet_pretrained,
+            num_stages=num_stages,
+            num_layers=num_layers,
+            num_f_maps=num_f_maps,
         )
-        self.head = DDTRLogHead(temporal_dim, num_actions, dropout=dropout)
+        self.head = MSTCNHead(num_stages=num_stages)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        feats = self.backbone(inputs)
-        return self.head(feats)
+        stage_outputs = self.backbone(inputs)
+        return self.head(stage_outputs)
 
 
 def _load_checkpoint(model: nn.Module, ckpt_path: str) -> None:
@@ -171,6 +177,7 @@ def main():
         num_actions=model_cfg["num_actions"],
         kernel_sizes=tuple(model_cfg.get("ms_kernel_sizes", [3, 5, 7])),
         dilations=tuple(model_cfg.get("ms_dilations", [1, 2, 3])),
+        num_stages=model_cfg.get("num_stages", 4),
         dropout=model_cfg.get("dropout", 0.1),
         resnet_name=model_cfg.get("resnet_name", "resnet18"),
         resnet_pretrained=model_cfg.get("resnet_pretrained", False),
@@ -189,7 +196,7 @@ def main():
             inputs = batch["inputs"].to(device)
             mask = batch["mask"].to(device)
             logits = model(inputs)
-            probs = DDTRLogHead.logits_to_probs(logits)
+            probs = MSTCNHead.logits_to_probs(logits)
 
             for i in range(inputs.shape[0]):
                 length = int(mask[i].sum().item())
