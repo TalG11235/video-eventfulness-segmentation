@@ -89,8 +89,81 @@ def _ddtr_accuracy(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tenso
     correct = (preds == labels) & mask
     return correct.sum().float() / mask.sum().clamp(min=1)
 
+def _segment_labels(labels):
+    segments = []
+    if not labels:
+        return segments
+    prev = labels[0]
+    start = 0
+    for i in range(1, len(labels)):
+        if labels[i] != prev:
+            segments.append((prev, start, i - 1))
+            prev = labels[i]
+            start = i
+    segments.append((prev, start, len(labels) - 1))
+    return segments
 
-def _run_epoch(model, loader, optimizer, device):
+
+def _edit_score(pred, gt):
+    pred_seq = [s[0] for s in _segment_labels(pred)]
+    gt_seq = [s[0] for s in _segment_labels(gt)]
+    n = len(pred_seq)
+    m = len(gt_seq)
+    if n == 0 and m == 0:
+        return 100.0
+    if n == 0 or m == 0:
+        return 0.0
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n + 1):
+        dp[i][0] = i
+    for j in range(m + 1):
+        dp[0][j] = j
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            if pred_seq[i - 1] == gt_seq[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1]
+            else:
+                dp[i][j] = min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]) + 1
+    dist = dp[n][m]
+    score = (1.0 - dist / max(n, m)) * 100.0
+    return max(score, 0.0)
+
+
+def _f1_score(pred, gt, overlap_threshold):
+    pred_segs = _segment_labels(pred)
+    gt_segs = _segment_labels(gt)
+    if not pred_segs and not gt_segs:
+        return 100.0
+    if not pred_segs or not gt_segs:
+        return 0.0
+    matched_gt = [False] * len(gt_segs)
+    tp = 0
+    fp = 0
+    for p_label, p_start, p_end in pred_segs:
+        best_iou = 0.0
+        best_idx = -1
+        for i, (g_label, g_start, g_end) in enumerate(gt_segs):
+            if matched_gt[i] or p_label != g_label:
+                continue
+            inter = max(0, min(p_end, g_end) - max(p_start, g_start) + 1)
+            union = (p_end - p_start + 1) + (g_end - g_start + 1) - inter
+            iou = inter / union if union > 0 else 0.0
+            if iou > best_iou:
+                best_iou = iou
+                best_idx = i
+        if best_iou >= overlap_threshold:
+            tp += 1
+            matched_gt[best_idx] = True
+        else:
+            fp += 1
+    fn = matched_gt.count(False)
+    denom = 2 * tp + fp + fn
+    if denom == 0:
+        return 0.0
+    return 100.0 * (2 * tp) / denom
+
+
+def _run_epoch(model, loader, optimizer, device, compute_tas_metrics=False):
     if loader is None:
         return None
     is_train = optimizer is not None
@@ -98,6 +171,10 @@ def _run_epoch(model, loader, optimizer, device):
     total_loss = 0.0
     total_acc = 0.0
     total_batches = 0
+    tas_f1_10 = []
+    tas_f1_25 = []
+    tas_f1_50 = []
+    tas_edit = []
 
     for batch in loader:
         inputs = batch["inputs"].to(device)
@@ -117,10 +194,33 @@ def _run_epoch(model, loader, optimizer, device):
         total_acc += acc.item()
         total_batches += 1
 
-    return {
+        if compute_tas_metrics:
+            preds = torch.argmax(logits, dim=-1).cpu().numpy()
+            labs = labels.cpu().numpy()
+            masks = mask.cpu().numpy()
+            for i in range(preds.shape[0]):
+                length = int(masks[i].sum())
+                pred_seq = preds[i, :length].tolist()
+                gt_seq = labs[i, :length].tolist()
+                tas_edit.append(_edit_score(pred_seq, gt_seq))
+                tas_f1_10.append(_f1_score(pred_seq, gt_seq, 0.1))
+                tas_f1_25.append(_f1_score(pred_seq, gt_seq, 0.25))
+                tas_f1_50.append(_f1_score(pred_seq, gt_seq, 0.5))
+
+    metrics = {
         "loss": total_loss / max(total_batches, 1),
         "accuracy": total_acc / max(total_batches, 1),
     }
+    if compute_tas_metrics:
+        metrics.update(
+            {
+                "f1@10": sum(tas_f1_10) / max(len(tas_f1_10), 1),
+                "f1@25": sum(tas_f1_25) / max(len(tas_f1_25), 1),
+                "f1@50": sum(tas_f1_50) / max(len(tas_f1_50), 1),
+                "edit": sum(tas_edit) / max(len(tas_edit), 1),
+            }
+        )
+    return metrics
 
 
 def _save_checkpoint(model, optimizer, epoch, metrics, path: Path):
@@ -176,7 +276,7 @@ def main():
     epochs = cfg.get("training", {}).get("epochs", 1)
     for epoch in range(1, epochs + 1):
         train_metrics = _run_epoch(model, train_loader, optimizer, device)
-        val_metrics = _run_epoch(model, val_loader, None, device)
+        val_metrics = _run_epoch(model, val_loader, None, device, compute_tas_metrics=True)
 
         if val_metrics is None:
             print(
@@ -185,13 +285,21 @@ def main():
                 f"train_acc={train_metrics['accuracy']:.4f}"
             )
         else:
-            print(
+            msg = (
                 f"epoch {epoch}/{epochs} "
                 f"train_loss={train_metrics['loss']:.4f} "
                 f"train_acc={train_metrics['accuracy']:.4f} "
                 f"val_loss={val_metrics['loss']:.4f} "
                 f"val_acc={val_metrics['accuracy']:.4f}"
             )
+            if "f1@10" in val_metrics:
+                msg += (
+                    f" val_f1@10={val_metrics['f1@10']:.2f} "
+                    f"val_f1@25={val_metrics['f1@25']:.2f} "
+                    f"val_f1@50={val_metrics['f1@50']:.2f} "
+                    f"val_edit={val_metrics['edit']:.2f}"
+                )
+            print(msg)
         record = {
             "epoch": epoch,
             "train": train_metrics,
