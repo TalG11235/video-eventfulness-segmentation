@@ -12,7 +12,7 @@ from src.backbones import ResNetFeatureExtractor
 from src.configs import Config
 from src.datasets import VideoDataset, pad_collate
 from src.models.ms_tcn import MSTCN, MSTCNConfig, edit_score, f1_score, frame_accuracy, ms_tcn_loss
-from src.utils import load_config
+from src.utils import load_config, save_two_row_stripe_plot
 
 
 class MSTCNWithBackbone(nn.Module):
@@ -84,6 +84,36 @@ def _build_loader(cfg: Config, split: str) -> DataLoader | None:
         collate_fn=pad_collate,
         generator=generator,
     )
+
+
+def _write_val_comparisons(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    out_dir: Path,
+    epoch: int,
+    num_classes: int,
+) -> None:
+    comp_dir = out_dir / "comparisons" / f"epoch{epoch:03d}"
+    comp_dir.mkdir(parents=True, exist_ok=True)
+    model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            if "labels" not in batch:
+                continue
+            inputs = batch["inputs"].to(device)
+            labels = batch["labels"].cpu().numpy()
+            mask = batch["mask"].cpu().numpy()
+            logits, _ = model(inputs)
+            preds = torch.argmax(logits, dim=-1).cpu().numpy()
+            for i, video_id in enumerate(batch["video_ids"]):
+                length = int(mask[i].sum())
+                if length <= 0:
+                    continue
+                gt = labels[i, :length]
+                pr = preds[i, :length]
+                out_path = comp_dir / f"{video_id}_epoch{epoch:03d}.png"
+                save_two_row_stripe_plot(gt, pr, out_path, num_classes=num_classes, title=video_id)
 
 
 def _save_checkpoint(model: nn.Module, optimizer: torch.optim.Optimizer, epoch: int, metrics: dict, path: Path):
@@ -263,6 +293,9 @@ def train(args: argparse.Namespace) -> None:
                 _save_checkpoint(model, optimizer, epoch, val_metrics, out_dir / "best.pt")
 
         _save_checkpoint(model, optimizer, epoch, train_metrics, out_dir / "last.pt")
+
+        if val_loader is not None:
+            _write_val_comparisons(model, val_loader, device, out_dir, epoch, cfg.model.num_classes)
 
 
 def infer(args: argparse.Namespace) -> None:
