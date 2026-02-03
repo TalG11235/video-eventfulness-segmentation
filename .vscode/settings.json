@@ -1,0 +1,16 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python scripts/ms_tcn_cli\\.py train --config configs/50salads_train_split2\\.yaml$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -m scripts\\.ms_tcn_cli train --config configs/50salads_train_split2\\.yaml$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^\\$env:PYTHONPATH = \"\\.\"; python scripts/ms_tcn_cli\\.py train --config configs/50salads_train_split2\\.yaml$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

@@ -1,3 +1,3 @@
-from .temporal_model import TemporalBackbone
+﻿from .resnet import ResNetFeatureExtractor
 
-__all__ = ["TemporalBackbone"]
+__all__ = ["ResNetFeatureExtractor"]
