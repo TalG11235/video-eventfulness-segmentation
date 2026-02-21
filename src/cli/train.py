@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -50,6 +52,8 @@ def write_val_comparisons(
     num_classes: int,
 ) -> None:
     """Visualize predictions vs ground truth for validation samples."""
+    if not callable(save_two_row_stripe_plot):
+        return
     comp_dir = out_dir / "comparisons" / f"epoch{epoch:03d}"
     comp_dir.mkdir(parents=True, exist_ok=True)
     model.eval()
@@ -162,6 +166,8 @@ def train_model(config_path: str, output_dir: str | None = None) -> dict:
     print(f"train: {len(train_loader.dataset)} samples, batch_size={cfg.data.batch_size}")
     if val_loader is not None:
         print(f"val: {len(val_loader.dataset)} samples, batch_size={cfg.data.batch_size}")
+    if val_loader is not None and not callable(save_two_row_stripe_plot):
+        print("save_two_row_stripe_plot unavailable; skipping validation comparison plots.")
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=cfg.training.lr, weight_decay=cfg.training.weight_decay

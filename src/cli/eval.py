@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Evaluation utilities for temporal action localization."""
 
 import json

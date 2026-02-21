@@ -12,6 +12,116 @@ from .infer import infer_batch
 from .eval import evaluate_model
 
 
+def _load_label_mapping(mapping_path: Path) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    with mapping_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            idx_str, label = line.split(maxsplit=1)
+            mapping[label] = int(idx_str)
+    return mapping
+
+
+def _read_split_video_ids(bundle_path: Path) -> list[str]:
+    video_ids = []
+    with bundle_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            video_ids.append(Path(line).stem)
+    return video_ids
+
+
+def _ensure_labels_npy(
+    video_id: str, ground_truth_dir: Path, labels_dir: Path, label_to_idx: dict[str, int]
+) -> Path:
+    import numpy as np
+
+    labels_out = labels_dir / f"{video_id}.npy"
+    if labels_out.exists():
+        return labels_out
+
+    gt_path = ground_truth_dir / f"{video_id}.txt"
+    if not gt_path.exists():
+        raise FileNotFoundError(f"Ground-truth file not found: {gt_path}")
+
+    label_names = []
+    with gt_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            label = line.strip()
+            if label:
+                label_names.append(label)
+
+    missing = sorted({name for name in label_names if name not in label_to_idx})
+    if missing:
+        raise ValueError(f"Unknown labels in {gt_path}: {missing[:5]}")
+
+    label_ids = np.asarray([label_to_idx[name] for name in label_names], dtype=np.int64)
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    np.save(labels_out, label_ids)
+    return labels_out
+
+
+def _write_manifest(
+    video_ids: list[str],
+    features_dir: Path,
+    ground_truth_dir: Path,
+    labels_dir: Path,
+    label_to_idx: dict[str, int],
+    manifest_path: Path,
+) -> None:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        for video_id in video_ids:
+            features_path = features_dir / f"{video_id}.npy"
+            if not features_path.exists():
+                raise FileNotFoundError(f"Feature file not found: {features_path}")
+            labels_path = _ensure_labels_npy(video_id, ground_truth_dir, labels_dir, label_to_idx)
+            item = {
+                "video_id": video_id,
+                "features_path": str(features_path),
+                "labels_path": str(labels_path),
+            }
+            handle.write(json.dumps(item) + "\n")
+
+
+def _ensure_split_manifests(cfg_split: dict[str, Any], split_idx: int, split_out_dir: Path) -> None:
+    data_cfg = cfg_split.setdefault("data", {})
+    data_dir = Path(data_cfg.get("data_dir", "data/50salads"))
+    features_dir = data_dir / "features"
+    ground_truth_dir = data_dir / "groundTruth"
+    splits_dir = data_dir / "splits"
+    mapping_path = data_dir / "mapping.txt"
+
+    train_bundle = splits_dir / f"train.split{split_idx}.bundle"
+    val_bundle = splits_dir / f"test.split{split_idx}.bundle"
+    required = [features_dir, ground_truth_dir, train_bundle, val_bundle, mapping_path]
+    missing = [str(p) for p in required if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Missing required 50Salads files for manifest generation: " + ", ".join(missing)
+        )
+
+    label_to_idx = _load_label_mapping(mapping_path)
+    train_ids = _read_split_video_ids(train_bundle)
+    val_ids = _read_split_video_ids(val_bundle)
+
+    manifests_dir = split_out_dir / "manifests"
+    labels_dir = split_out_dir / "labels"
+    train_manifest = manifests_dir / "train.jsonl"
+    val_manifest = manifests_dir / "val.jsonl"
+
+    _write_manifest(train_ids, features_dir, ground_truth_dir, labels_dir, label_to_idx, train_manifest)
+    _write_manifest(val_ids, features_dir, ground_truth_dir, labels_dir, label_to_idx, val_manifest)
+
+    data_cfg["manifest_train"] = str(train_manifest)
+    data_cfg["manifest_val"] = str(val_manifest)
+    data_cfg["manifest_test"] = str(val_manifest)
+
+
 def sweep_splits(
     config_path: str,
     splits: list[int] = None,
@@ -60,6 +170,7 @@ def sweep_splits(
         if "training" not in cfg_split:
             cfg_split["training"] = {}
         cfg_split["training"]["save_dir"] = str(split_out_dir / "checkpoints")
+        _ensure_split_manifests(cfg_split, split_idx, split_out_dir)
 
         # Write split config temporarily
         split_config_path = split_out_dir / "config.yaml"
@@ -142,3 +253,45 @@ def _std(values: list[float]) -> float:
     mean = sum(values) / len(values)
     variance = sum((x - mean) ** 2 for x in values) / len(values)
     return variance ** 0.5
+
+
+def main():
+    """CLI entry point for cross-validation sweep."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Run cross-validation sweep on specified splits"
+    )
+    parser.add_argument("config", help="Path to config file (YAML)")
+    args = parser.parse_args()
+
+    # Load config
+    cfg = load_config(args.config)
+
+    # Get splits from config
+    splits_config = cfg.get("data", {}).get("splits", "all")
+
+    if splits_config == "all":
+        splits = [1, 2, 3, 4, 5]
+    elif isinstance(splits_config, list):
+        splits = splits_config
+    else:
+        print(f"Error: data.splits must be 'all' or a list, got {splits_config}")
+        sys.exit(1)
+
+    print(f"Running sweep on splits: {splits}")
+
+    # Run sweep
+    sweep_splits(
+        config_path=args.config,
+        splits=splits,
+        output_base_dir=cfg.get("training", {}).get("save_dir", "outputs"),
+        parallel=False,
+    )
+
+    print("✓ Sweep complete")
+
+
+if __name__ == "__main__":
+    main()
