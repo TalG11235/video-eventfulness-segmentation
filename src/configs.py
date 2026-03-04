@@ -68,18 +68,11 @@ class EvalConfig:
 
 
 @dataclass
-class DDTRConfig:
-    smoothing_weight: float = 0.15
-
-
-@dataclass
 class Config:
-    task: str = "ddtr"
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
-    ddtr: DDTRConfig = field(default_factory=DDTRConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
@@ -97,6 +90,4 @@ class Config:
         )
 
         eval_cfg = EvalConfig(**(raw.get("eval", {}) or {}))
-        ddtr = DDTRConfig(**(raw.get("ddtr", {}) or {}))
-        task = raw.get("task", "ddtr")
-        return cls(task=task, model=model, data=data, training=training, eval=eval_cfg, ddtr=ddtr)
+        return cls(model=model, data=data, training=training, eval=eval_cfg)

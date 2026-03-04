@@ -8,7 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from src.configs import Config
-from src.datasets import VideoDataset, pad_collate
+from src.datasets import VideoDataset, compute_feature_normalization_stats, pad_collate
 from src.model.ms_tcn import ms_tcn_loss, frame_accuracy, f1_score, edit_score
 from src.utils.checkpoints import save_checkpoint
 from src.utils.metadata import write_metadata
@@ -230,6 +230,20 @@ def train_model(
 ) -> dict:
     """Train MS-TCN model on training data."""
     cfg = Config.from_dict(load_config(config_path))
+    if (
+        cfg.model.input_type == "features"
+        and cfg.data.normalize_features
+        and (cfg.data.feature_mean is None or cfg.data.feature_std is None)
+        and cfg.data.manifest_train is not None
+    ):
+        cfg.data.feature_mean, cfg.data.feature_std = compute_feature_normalization_stats(
+            cfg.data.manifest_train,
+            feature_dim=cfg.model.feature_dim,
+        )
+        print(
+            "Computed feature normalization stats from train manifest: "
+            f"mean={cfg.data.feature_mean:.6f}, std={cfg.data.feature_std:.6f}"
+        )
     set_seed(cfg.training.seed)
     device = get_device(cfg.training.device)
     print(f"device: {device}, input_type={cfg.model.input_type}")

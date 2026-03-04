@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.configs import Config
-from src.datasets import VideoDataset, pad_collate
+from src.datasets import VideoDataset, compute_feature_normalization_stats, pad_collate
 from src.model.ms_tcn import f1_score, edit_score, frame_accuracy
 
 # scipy is an optional dependency used for simple post‑processing of predictions
@@ -26,6 +26,15 @@ def evaluate_model(
 ) -> dict:
     """Evaluate model on validation/test manifest."""
     cfg = Config.from_dict(load_config(config_path))
+    if (
+        cfg.model.input_type == "features"
+        and cfg.data.normalize_features
+        and (cfg.data.feature_mean is None or cfg.data.feature_std is None)
+    ):
+        cfg.data.feature_mean, cfg.data.feature_std = compute_feature_normalization_stats(
+            manifest_path,
+            feature_dim=cfg.model.feature_dim,
+        )
     device = get_device(cfg.training.device)
 
     model = MSTCNWithBackbone(cfg).to(device)

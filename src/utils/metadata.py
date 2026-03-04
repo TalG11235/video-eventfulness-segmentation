@@ -16,7 +16,6 @@ def write_metadata(cfg: Config, out_dir: Path) -> None:
         "data": asdict(cfg.data),
         "training": asdict(cfg.training),
         "eval": asdict(cfg.eval),
-        "ddtr": asdict(cfg.ddtr),
         "git_commit": get_git_commit(),
     }
     with (out_dir / "metadata.json").open("w", encoding="utf-8") as handle:

@@ -8,6 +8,67 @@ import torch
 from torch.utils.data import Dataset
 
 
+def load_array(path: str | Path) -> np.ndarray:
+    path = Path(path)
+    if path.suffix == ".npy":
+        return np.load(path)
+    if path.suffix in {".pt", ".pth"}:
+        return torch.load(path).cpu().numpy()
+    raise ValueError(f"Unsupported file: {path}")
+
+
+def prepare_feature_array(
+    arr: np.ndarray, feature_dim: int | None = None, source: str | Path | None = None
+) -> np.ndarray:
+    arr = arr.astype(np.float32)
+    if arr.ndim == 2 and feature_dim is not None:
+        if arr.shape[0] == feature_dim and arr.shape[1] != feature_dim:
+            arr = arr.T
+        elif arr.shape[1] != feature_dim:
+            src = source if source is not None else "<array>"
+            raise ValueError(
+                f"Feature dim mismatch for {src}: got {arr.shape}, expected feature_dim={feature_dim}"
+            )
+    return arr
+
+
+def compute_feature_normalization_stats(
+    manifest_path: str, feature_dim: int | None = None
+) -> tuple[float, float]:
+    manifest = Path(manifest_path)
+    if not manifest.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest}")
+
+    total_sum = 0.0
+    total_sumsq = 0.0
+    total_count = 0
+
+    with manifest.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            if "features_path" not in item:
+                raise KeyError("Missing features_path in manifest entry")
+            arr = prepare_feature_array(
+                load_array(item["features_path"]),
+                feature_dim=feature_dim,
+                source=item["features_path"],
+            )
+            total_sum += float(arr.sum(dtype=np.float64))
+            total_sumsq += float(np.square(arr, dtype=np.float64).sum(dtype=np.float64))
+            total_count += int(arr.size)
+
+    if total_count == 0:
+        raise ValueError(f"No features found in manifest: {manifest}")
+
+    mean = total_sum / total_count
+    variance = max((total_sumsq / total_count) - (mean * mean), 0.0)
+    std = max(variance**0.5, 1e-6)
+    return mean, std
+
+
 class VideoDataset(Dataset):
     def __init__(
         self,
@@ -44,12 +105,7 @@ class VideoDataset(Dataset):
         return len(self.items)
 
     def _load_array(self, path: str) -> np.ndarray:
-        path = Path(path)
-        if path.suffix == ".npy":
-            return np.load(path)
-        if path.suffix in {".pt", ".pth"}:
-            return torch.load(path).cpu().numpy()
-        raise ValueError(f"Unsupported file: {path}")
+        return load_array(path)
 
     def _load_inputs(self, item):
         if self.input_type == "frames":
@@ -58,15 +114,11 @@ class VideoDataset(Dataset):
             key = "features_path"
         if key not in item:
             raise KeyError(f"Missing {key} in manifest entry")
-        arr = self._load_array(item[key]).astype(np.float32)
-        if self.input_type == "features" and arr.ndim == 2 and self.feature_dim is not None:
-            if arr.shape[0] == self.feature_dim and arr.shape[1] != self.feature_dim:
-                arr = arr.T
-            elif arr.shape[1] != self.feature_dim:
-                raise ValueError(
-                    f"Feature dim mismatch for {item[key]}: got {arr.shape}, "
-                    f"expected feature_dim={self.feature_dim}"
-                )
+        arr = self._load_array(item[key])
+        if self.input_type == "features":
+            arr = prepare_feature_array(arr, feature_dim=self.feature_dim, source=item[key])
+        else:
+            arr = arr.astype(np.float32)
         # Apply feature normalization if enabled
         if self.normalize_features and self.input_type == "features":
             if self.feature_mean is not None and self.feature_std is not None:

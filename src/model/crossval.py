@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.datasets import compute_feature_normalization_stats
 from src.datasets.converters import prepare_split_manifests
 from src.utils import load_config
 
@@ -62,6 +63,7 @@ def run_crossval(
             cfg_split["training"] = {}
         cfg_split["training"]["save_dir"] = str(split_out_dir / "checkpoints")
         prepare_split_manifests(cfg_split, split_idx, split_out_dir)
+        _ensure_feature_normalization_stats(cfg_split)
 
         # Write split config temporarily
         split_config_path = split_out_dir / "config.yaml"
@@ -148,6 +150,25 @@ def _std(values: list[float]) -> float:
     mean = sum(values) / len(values)
     variance = sum((x - mean) ** 2 for x in values) / len(values)
     return variance ** 0.5
+
+
+def _ensure_feature_normalization_stats(cfg_split: dict) -> None:
+    data_cfg = cfg_split.get("data", {})
+    if not data_cfg.get("normalize_features", False):
+        return
+    if data_cfg.get("feature_mean") is not None and data_cfg.get("feature_std") is not None:
+        return
+
+    train_manifest = data_cfg.get("manifest_train")
+    if not train_manifest:
+        raise ValueError("normalize_features requires data.manifest_train to compute statistics")
+
+    mean, std = compute_feature_normalization_stats(
+        train_manifest, feature_dim=cfg_split.get("model", {}).get("feature_dim")
+    )
+    data_cfg["feature_mean"] = mean
+    data_cfg["feature_std"] = std
+    print(f"Computed feature normalization stats from train manifest: mean={mean:.6f}, std={std:.6f}")
 
 
 def _timestamped_output_dir(base_dir: str) -> str:
