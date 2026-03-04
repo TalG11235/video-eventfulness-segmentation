@@ -38,6 +38,16 @@ class DataConfig:
 
 
 @dataclass
+class LRSchedulerConfig:
+    type: str = "reduce_on_plateau"
+    factor: float = 0.5
+    patience: int = 5
+    mode: str = "min"
+    step_size: int = 10
+    gamma: float = 0.1
+
+
+@dataclass
 class TrainingConfig:
     batch_size: int = 4
     epochs: int = 50
@@ -47,6 +57,14 @@ class TrainingConfig:
     device: str = "cpu"
     save_dir: str = "outputs"
     seed: int = 0
+    checkpoint_metric: str = "loss"
+    checkpoint_metric_higher_is_better: bool = False
+    lr_scheduler: LRSchedulerConfig | None = None
+
+
+@dataclass
+class EvalConfig:
+    median_filter: int = 1
 
 
 @dataclass
@@ -60,13 +78,25 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    eval: EvalConfig = field(default_factory=EvalConfig)
     ddtr: DDTRConfig = field(default_factory=DDTRConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
-        model = ModelConfig(**raw.get("model", {}))
-        data = DataConfig(**raw.get("data", {}))
-        training = TrainingConfig(**raw.get("training", {}))
-        ddtr = DDTRConfig(**raw.get("ddtr", {}))
+        model = ModelConfig(**(raw.get("model", {}) or {}))
+        data = DataConfig(**(raw.get("data", {}) or {}))
+
+        training_raw = raw.get("training", {}) or {}
+        lr_scheduler_raw = training_raw.get("lr_scheduler")
+        training_kwargs = {k: v for k, v in training_raw.items() if k != "lr_scheduler"}
+        training = TrainingConfig(
+            **training_kwargs,
+            lr_scheduler=(
+                LRSchedulerConfig(**lr_scheduler_raw) if lr_scheduler_raw is not None else None
+            ),
+        )
+
+        eval_cfg = EvalConfig(**(raw.get("eval", {}) or {}))
+        ddtr = DDTRConfig(**(raw.get("ddtr", {}) or {}))
         task = raw.get("task", "ddtr")
-        return cls(task=task, model=model, data=data, training=training, ddtr=ddtr)
+        return cls(task=task, model=model, data=data, training=training, eval=eval_cfg, ddtr=ddtr)

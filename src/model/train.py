@@ -204,21 +204,21 @@ def train_model(
 
     # optional learning‑rate scheduler defined in config.training.lr_scheduler
     scheduler = None
-    sched_cfg = cfg.training.get("lr_scheduler", None)
+    sched_cfg = cfg.training.lr_scheduler
     if sched_cfg is not None:
-        typ = sched_cfg.get("type", "reduce_on_plateau")
+        typ = sched_cfg.type
         if typ == "reduce_on_plateau":
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
-                factor=sched_cfg.get("factor", 0.5),
-                patience=sched_cfg.get("patience", 5),
-                mode=sched_cfg.get("mode", "min"),
+                factor=sched_cfg.factor,
+                patience=sched_cfg.patience,
+                mode=sched_cfg.mode,
             )
         elif typ == "step_lr":
             scheduler = torch.optim.lr_scheduler.StepLR(
                 optimizer,
-                step_size=sched_cfg.get("step_size", 10),
-                gamma=sched_cfg.get("gamma", 0.1),
+                step_size=sched_cfg.step_size,
+                gamma=sched_cfg.gamma,
             )
         # add other schedulers here if needed
 
@@ -230,9 +230,9 @@ def train_model(
     metrics_path = out_dir / "metrics.jsonl"
 
     # choose which validation metric to use for checkpointing; loss by default
-    checkpoint_metric = cfg.training.get("checkpoint_metric", "loss")
+    checkpoint_metric = cfg.training.checkpoint_metric
     # if the chosen metric should be maximized set this to True (edit, f1 etc.)
-    checkpoint_metric_higher_is_better = cfg.training.get("checkpoint_metric_higher_is_better", False)
+    checkpoint_metric_higher_is_better = cfg.training.checkpoint_metric_higher_is_better
 
     best_val = None
     for epoch in range(1, cfg.training.epochs + 1):
