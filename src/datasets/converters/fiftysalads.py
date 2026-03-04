@@ -83,6 +83,7 @@ def _write_manifest(
 
 def prepare_split_manifests(cfg_split: dict[str, Any], split_idx: int, split_out_dir: Path) -> None:
     data_cfg = cfg_split.setdefault("data", {})
+    model_cfg = cfg_split.setdefault("model", {})
     data_dir = Path(data_cfg.get("data_dir", "data/50salads"))
     features_dir = data_dir / "features"
     ground_truth_dir = data_dir / "groundTruth"
@@ -99,6 +100,18 @@ def prepare_split_manifests(cfg_split: dict[str, Any], split_idx: int, split_out
         )
 
     label_to_idx = _load_label_mapping(mapping_path)
+    inferred_num_classes = max(label_to_idx.values()) + 1 if label_to_idx else 0
+    configured_num_classes = model_cfg.get("num_classes")
+    if (
+        configured_num_classes is not None
+        and int(configured_num_classes) != inferred_num_classes
+    ):
+        raise ValueError(
+            "Configured model.num_classes does not match 50Salads mapping.txt: "
+            f"got {configured_num_classes}, inferred {inferred_num_classes}"
+        )
+    model_cfg["num_classes"] = inferred_num_classes
+
     train_ids = _read_split_video_ids(train_bundle)
     val_ids = _read_split_video_ids(val_bundle)
 
