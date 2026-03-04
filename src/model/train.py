@@ -9,11 +9,12 @@ from torch.utils.data import DataLoader
 
 from src.configs import Config
 from src.datasets import VideoDataset, pad_collate
-from src.models.ms_tcn import ms_tcn_loss, frame_accuracy, f1_score, edit_score
+from src.model.ms_tcn import ms_tcn_loss, frame_accuracy, f1_score, edit_score
+from src.utils.checkpoints import save_checkpoint
+from src.utils.metadata import write_metadata
+from src.utils.model_factory import MSTCNWithBackbone
+from src.utils.runtime import get_device, set_seed
 from src.utils import load_config, save_two_row_stripe_plot
-
-from .utils import MSTCNWithBackbone, set_seed, get_device, save_checkpoint, write_metadata
-
 
 def build_loader(cfg: Config, split: str) -> DataLoader | None:
     """Build train/val dataloader from manifest in config."""
@@ -47,18 +48,25 @@ def write_val_comparisons(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
-    out_dir: Path,
+    comparisons_root: Path,
     epoch: int,
     num_classes: int,
+    max_videos: int = 3,
+    max_width_px: int = 60000,
+    pixels_per_frame: int = 2,
 ) -> None:
-    """Visualize predictions vs ground truth for validation samples."""
+    """Visualize predictions vs ground truth for first validation samples."""
     if not callable(save_two_row_stripe_plot):
         return
-    comp_dir = out_dir / "comparisons" / f"epoch{epoch:03d}"
+    comp_dir = comparisons_root / f"epoch{epoch:03d}"
     comp_dir.mkdir(parents=True, exist_ok=True)
+    max_frames_per_plot = max(1, max_width_px // max(pixels_per_frame, 1))
+    plotted_videos = 0
     model.eval()
     with torch.no_grad():
         for batch in loader:
+            if plotted_videos >= max_videos:
+                break
             if "labels" not in batch:
                 continue
             inputs = batch["inputs"].to(device)
@@ -67,13 +75,32 @@ def write_val_comparisons(
             logits, _ = model(inputs)
             preds = torch.argmax(logits, dim=-1).cpu().numpy()
             for i, video_id in enumerate(batch["video_ids"]):
+                if plotted_videos >= max_videos:
+                    break
                 length = int(mask[i].sum())
                 if length <= 0:
                     continue
                 gt = labels[i, :length]
                 pr = preds[i, :length]
-                out_path = comp_dir / f"{video_id}_epoch{epoch:03d}.png"
-                save_two_row_stripe_plot(gt, pr, out_path, num_classes=num_classes, title=video_id)
+                num_parts = max(1, (length + max_frames_per_plot - 1) // max_frames_per_plot)
+                for part_idx in range(num_parts):
+                    start = part_idx * max_frames_per_plot
+                    end = min(length, (part_idx + 1) * max_frames_per_plot)
+                    gt_part = gt[start:end]
+                    pr_part = pr[start:end]
+                    if gt_part.size == 0:
+                        continue
+                    suffix = f"_part{part_idx + 1:03d}" if num_parts > 1 else ""
+                    out_path = comp_dir / f"{video_id}_epoch{epoch:03d}{suffix}.png"
+                    title = f"{video_id} [{start}:{end}]"
+                    save_two_row_stripe_plot(
+                        gt_part,
+                        pr_part,
+                        out_path,
+                        num_classes=num_classes,
+                        title=title,
+                    )
+                plotted_videos += 1
 
 
 def run_epoch(
@@ -151,7 +178,9 @@ def run_epoch(
     return metrics
 
 
-def train_model(config_path: str, output_dir: str | None = None) -> dict:
+def train_model(
+    config_path: str, output_dir: str | None = None, comparisons_dir: str | None = None
+) -> dict:
     """Train MS-TCN model on training data."""
     cfg = Config.from_dict(load_config(config_path))
     set_seed(cfg.training.seed)
@@ -175,6 +204,8 @@ def train_model(config_path: str, output_dir: str | None = None) -> dict:
 
     out_dir = Path(output_dir or cfg.training.save_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    comparisons_root = Path(comparisons_dir) if comparisons_dir is not None else out_dir.parent / "comparisons"
+    comparisons_root.mkdir(parents=True, exist_ok=True)
     write_metadata(cfg, out_dir)
     metrics_path = out_dir / "metrics.jsonl"
 
@@ -228,6 +259,8 @@ def train_model(config_path: str, output_dir: str | None = None) -> dict:
         save_checkpoint(model, optimizer, epoch, train_metrics, out_dir / "last.pt")
 
         if val_loader is not None:
-            write_val_comparisons(model, val_loader, device, out_dir, epoch, cfg.model.num_classes)
+            write_val_comparisons(
+                model, val_loader, device, comparisons_root, epoch, cfg.model.num_classes
+            )
 
     return {"best_val": best_val, "output_dir": str(out_dir)}

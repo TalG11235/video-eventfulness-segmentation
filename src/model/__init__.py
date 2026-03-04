@@ -1,11 +1,10 @@
-"""CLI module for training, inference, and evaluation."""
+"""Model package with training, inference, and evaluation entry points."""
 
 __all__ = [
     "train_model",
     "infer_batch",
     "evaluate_model",
-    "sweep_splits",
-    "DDTRDatasetGenerator",
+    "run_crossval",
 ]
 
 
@@ -22,12 +21,8 @@ def __getattr__(name):
         from .eval import evaluate_model
 
         return evaluate_model
-    if name == "sweep_splits":
-        from .sweep import sweep_splits
+    if name == "run_crossval":
+        from .crossval import run_crossval
 
-        return sweep_splits
-    if name == "DDTRDatasetGenerator":
-        from src.utils.pickle_io import DDTRDatasetGenerator
-
-        return DDTRDatasetGenerator
+        return run_crossval
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

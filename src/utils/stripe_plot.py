@@ -44,7 +44,7 @@ def save_two_row_stripe_plot(
     cmap = _build_cmap(num_classes)
     stripes = np.stack([gt, pred], axis=0)
 
-    fig_w = max(6.0, length / 40.0)
+    fig_w = max(6.0, (length * 2.0) / float(dpi))
     fig, ax = plt.subplots(figsize=(fig_w, 1.8), dpi=dpi)
     ax.imshow(
         stripes,

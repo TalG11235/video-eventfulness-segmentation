@@ -4,7 +4,7 @@
 
 Train:
 ```bash
-python scripts/ms_tcn_cli.py train --config configs/50salads_train_split1.yaml
+python3 -m src.model.crossval configs/50salads.yaml
 ```
 
 Infer (per-video logits/probs to a folder):

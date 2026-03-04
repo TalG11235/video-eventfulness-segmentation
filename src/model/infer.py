@@ -6,10 +6,10 @@ from torch.utils.data import DataLoader
 
 from src.configs import Config
 from src.datasets import VideoDataset, pad_collate
+from src.utils.checkpoints import load_checkpoint
+from src.utils.model_factory import MSTCNWithBackbone
+from src.utils.runtime import get_device
 from src.utils import load_config
-
-from .utils import MSTCNWithBackbone, get_device, load_checkpoint
-
 
 def infer_batch(
     config_path: str, checkpoint_path: str, manifest_path: str, output_dir: str
