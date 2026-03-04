@@ -6,6 +6,9 @@ import subprocess
 import numpy as np
 import torch
 
+from src.configs import Config
+from src.datasets import compute_feature_normalization_stats
+
 
 def set_seed(seed: int) -> None:
     """Set random seed for reproducibility."""
@@ -32,3 +35,33 @@ def get_git_commit() -> str | None:
         return out.decode("utf-8").strip()
     except Exception:
         return None
+
+
+def ensure_feature_normalization_stats(
+    cfg: Config,
+    train_manifest_path: str | None = None,
+    log: bool = False,
+) -> None:
+    if (
+        cfg.model.input_type != "features"
+        or not cfg.data.normalize_features
+        or (cfg.data.feature_mean is not None and cfg.data.feature_std is not None)
+    ):
+        return
+
+    manifest_path = train_manifest_path or cfg.data.manifest_train
+    if manifest_path is None:
+        raise ValueError(
+            "normalize_features=true but stats are missing and manifest_train unavailable. "
+            "Please ensure stats are pre-computed or manifest_train is in config."
+        )
+
+    cfg.data.feature_mean, cfg.data.feature_std = compute_feature_normalization_stats(
+        manifest_path,
+        feature_dim=cfg.model.feature_dim,
+    )
+    if log:
+        print(
+            "Computed feature normalization stats from train manifest: "
+            f"mean={cfg.data.feature_mean:.6f}, std={cfg.data.feature_std:.6f}"
+        )

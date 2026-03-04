@@ -8,12 +8,12 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from src.configs import Config
-from src.datasets import VideoDataset, compute_feature_normalization_stats, pad_collate
+from src.datasets import VideoDataset, pad_collate
 from src.model.ms_tcn import ms_tcn_loss, frame_accuracy, f1_score, edit_score
 from src.utils.checkpoints import save_checkpoint
 from src.utils.metadata import write_metadata
 from src.utils.model_factory import MSTCNWithBackbone
-from src.utils.runtime import get_device, set_seed
+from src.utils.runtime import ensure_feature_normalization_stats, get_device, set_seed
 from src.utils import load_config, save_two_row_stripe_plot
 
 def build_loader(cfg: Config, split: str) -> DataLoader | None:
@@ -230,20 +230,7 @@ def train_model(
 ) -> dict:
     """Train MS-TCN model on training data."""
     cfg = Config.from_dict(load_config(config_path))
-    if (
-        cfg.model.input_type == "features"
-        and cfg.data.normalize_features
-        and (cfg.data.feature_mean is None or cfg.data.feature_std is None)
-        and cfg.data.manifest_train is not None
-    ):
-        cfg.data.feature_mean, cfg.data.feature_std = compute_feature_normalization_stats(
-            cfg.data.manifest_train,
-            feature_dim=cfg.model.feature_dim,
-        )
-        print(
-            "Computed feature normalization stats from train manifest: "
-            f"mean={cfg.data.feature_mean:.6f}, std={cfg.data.feature_std:.6f}"
-        )
+    ensure_feature_normalization_stats(cfg, log=True)
     set_seed(cfg.training.seed)
     device = get_device(cfg.training.device)
     print(f"device: {device}, input_type={cfg.model.input_type}")
