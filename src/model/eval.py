@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
-
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -62,7 +59,7 @@ def evaluate_model(
     video_metrics = []
 
     # read optional post‑processing settings from config
-    median_kernel = cfg.get("eval", {}).get("median_filter", 0)
+    median_kernel = cfg.eval.median_filter
     if median_kernel and medfilt is None:
         print("warning: median_filter requested but scipy not installed; skipping")
         median_kernel = 0

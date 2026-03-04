@@ -2,6 +2,7 @@
 
 import copy
 import json
+from datetime import datetime
 from pathlib import Path
 
 from src.datasets.converters import prepare_split_manifests
@@ -149,6 +150,11 @@ def _std(values: list[float]) -> float:
     return variance ** 0.5
 
 
+def _timestamped_output_dir(base_dir: str) -> str:
+    timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+    return f"{base_dir}-{timestamp}"
+
+
 def main():
     """CLI entry point for cross-validation runs."""
     import argparse
@@ -158,6 +164,10 @@ def main():
         description="Run cross-validation on specified splits"
     )
     parser.add_argument("config", help="Path to config file (YAML)")
+    parser.add_argument(
+        "--output_dir",
+        help="Explicit output directory. If omitted, a timestamped directory is created from training.save_dir.",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -177,10 +187,13 @@ def main():
     print(f"Running cross-validation on splits: {splits}")
 
     # Run cross-validation
+    output_dir = args.output_dir or _timestamped_output_dir(
+        cfg.get("training", {}).get("save_dir", "outputs")
+    )
     run_crossval(
         config_path=args.config,
         splits=splits,
-        output_base_dir=cfg.get("training", {}).get("save_dir", "outputs"),
+        output_base_dir=output_dir,
         parallel=False,
     )
 

@@ -178,6 +178,53 @@ def run_epoch(
     return metrics
 
 
+def _print_epoch_table_header(has_val: bool) -> None:
+    columns = [
+        ("epoch", 10),
+        ("train_loss", 12),
+        ("train_acc", 11),
+    ]
+    if has_val:
+        columns.extend(
+            [
+                ("val_loss", 12),
+                ("val_acc", 10),
+                ("val_f1@10", 11),
+                ("val_f1@25", 11),
+                ("val_f1@50", 11),
+                ("val_edit", 11),
+            ]
+        )
+
+    header = " ".join(f"{name:>{width}}" for name, width in columns)
+    divider = " ".join("-" * width for _, width in columns)
+    print(header)
+    print(divider)
+
+
+def _print_epoch_table_row(
+    epoch: int, total_epochs: int, train_metrics: dict, val_metrics: dict | None
+) -> None:
+    values = [
+        (f"{epoch}/{total_epochs}", 10),
+        (f"{train_metrics['loss']:.4f}", 12),
+        (f"{train_metrics['accuracy']:.4f}", 11),
+    ]
+    if val_metrics is not None:
+        values.extend(
+            [
+                (f"{val_metrics['loss']:.4f}", 12),
+                (f"{val_metrics['accuracy']:.4f}", 10),
+                (f"{val_metrics['f1@10']:.2f}", 11),
+                (f"{val_metrics['f1@25']:.2f}", 11),
+                (f"{val_metrics['f1@50']:.2f}", 11),
+                (f"{val_metrics['edit']:.2f}", 11),
+            ]
+        )
+
+    print(" ".join(f"{value:>{width}}" for value, width in values))
+
+
 def train_model(
     config_path: str, output_dir: str | None = None, comparisons_dir: str | None = None
 ) -> dict:
@@ -228,6 +275,7 @@ def train_model(
     comparisons_root.mkdir(parents=True, exist_ok=True)
     write_metadata(cfg, out_dir)
     metrics_path = out_dir / "metrics.jsonl"
+    printed_epoch_header = False
 
     # choose which validation metric to use for checkpointing; loss by default
     checkpoint_metric = cfg.training.checkpoint_metric
@@ -255,21 +303,10 @@ def train_model(
                 compute_tas_metrics=True,
             )
 
-        msg = (
-            f"epoch {epoch}/{cfg.training.epochs} "
-            f"train_loss={train_metrics['loss']:.4f} "
-            f"train_acc={train_metrics['accuracy']:.4f}"
-        )
-        if val_metrics is not None:
-            msg += (
-                f" val_loss={val_metrics['loss']:.4f} "
-                f"val_acc={val_metrics['accuracy']:.4f} "
-                f"val_f1@10={val_metrics['f1@10']:.2f} "
-                f"val_f1@25={val_metrics['f1@25']:.2f} "
-                f"val_f1@50={val_metrics['f1@50']:.2f} "
-                f"val_edit={val_metrics['edit']:.2f}"
-            )
-        print(msg)
+        if not printed_epoch_header:
+            _print_epoch_table_header(val_metrics is not None)
+            printed_epoch_header = True
+        _print_epoch_table_row(epoch, cfg.training.epochs, train_metrics, val_metrics)
 
         record = {"epoch": epoch, "train": train_metrics, "val": val_metrics}
         with metrics_path.open("a", encoding="utf-8") as handle:
