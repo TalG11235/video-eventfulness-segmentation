@@ -202,12 +202,37 @@ def train_model(
         model.parameters(), lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
     )
 
+    # optional learning‑rate scheduler defined in config.training.lr_scheduler
+    scheduler = None
+    sched_cfg = cfg.training.get("lr_scheduler", None)
+    if sched_cfg is not None:
+        typ = sched_cfg.get("type", "reduce_on_plateau")
+        if typ == "reduce_on_plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                factor=sched_cfg.get("factor", 0.5),
+                patience=sched_cfg.get("patience", 5),
+                mode=sched_cfg.get("mode", "min"),
+            )
+        elif typ == "step_lr":
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=sched_cfg.get("step_size", 10),
+                gamma=sched_cfg.get("gamma", 0.1),
+            )
+        # add other schedulers here if needed
+
     out_dir = Path(output_dir or cfg.training.save_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     comparisons_root = Path(comparisons_dir) if comparisons_dir is not None else out_dir.parent / "comparisons"
     comparisons_root.mkdir(parents=True, exist_ok=True)
     write_metadata(cfg, out_dir)
     metrics_path = out_dir / "metrics.jsonl"
+
+    # choose which validation metric to use for checkpointing; loss by default
+    checkpoint_metric = cfg.training.get("checkpoint_metric", "loss")
+    # if the chosen metric should be maximized set this to True (edit, f1 etc.)
+    checkpoint_metric_higher_is_better = cfg.training.get("checkpoint_metric_higher_is_better", False)
 
     best_val = None
     for epoch in range(1, cfg.training.epochs + 1):
@@ -251,8 +276,17 @@ def train_model(
             handle.write(json.dumps(record) + "\n")
 
         if val_metrics is not None:
-            score = val_metrics["loss"]
-            if best_val is None or score < best_val:
+            # update scheduler if we have one
+            if scheduler is not None:
+                if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    scheduler.step(val_metrics.get("loss", 0.0))
+                else:
+                    scheduler.step()
+
+            score = val_metrics.get(checkpoint_metric, val_metrics.get("loss"))
+            if best_val is None or (
+                score > best_val if checkpoint_metric_higher_is_better else score < best_val
+            ):
                 best_val = score
                 save_checkpoint(model, optimizer, epoch, val_metrics, out_dir / "best.pt")
 

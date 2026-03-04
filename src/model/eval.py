@@ -13,6 +13,12 @@ from torch.utils.data import DataLoader
 from src.configs import Config
 from src.datasets import VideoDataset, pad_collate
 from src.model.ms_tcn import f1_score, edit_score, frame_accuracy
+
+# scipy is an optional dependency used for simple post‑processing of predictions
+try:
+    from scipy.signal import medfilt
+except ImportError:  # pragma: no cover - optional
+    medfilt = None
 from src.utils.checkpoints import load_checkpoint
 from src.utils.model_factory import MSTCNWithBackbone
 from src.utils.runtime import get_device
@@ -55,6 +61,12 @@ def evaluate_model(
     edit_scores = []
     video_metrics = []
 
+    # read optional post‑processing settings from config
+    median_kernel = cfg.get("eval", {}).get("median_filter", 0)
+    if median_kernel and medfilt is None:
+        print("warning: median_filter requested but scipy not installed; skipping")
+        median_kernel = 0
+
     with torch.no_grad():
         for batch in loader:
             inputs = batch["inputs"].to(device)
@@ -75,6 +87,11 @@ def evaluate_model(
             if length > 0:
                 pred_seq = preds[0, :length].tolist()
                 gt_seq = labs[0, :length].tolist()
+                # optionally smooth the prediction sequence before scoring
+                if median_kernel and medfilt is not None:
+                    import numpy as _np
+                    pred_seq = medfilt(_np.array(pred_seq), kernel_size=median_kernel).astype(int).tolist()
+
                 f1_10 = f1_score(pred_seq, gt_seq, 0.1)
                 f1_25 = f1_score(pred_seq, gt_seq, 0.25)
                 f1_50 = f1_score(pred_seq, gt_seq, 0.5)
