@@ -1,23 +1,55 @@
-# MS-TCN Segmentation
+# Event Segmentation (MS-TCN)
 
-## Quickstart
+This project trains and evaluates a temporal event segmentation model (MS-TCN) for frame-level action labeling in videos.
 
-Train:
+## The Pipeline
+
+`src.model.crossval` runs the full segmentation workflow per split:
+
+1. Builds split manifests from dataset metadata.
+2. Trains MS-TCN on train videos.
+3. Runs inference on validation videos.
+4. Evaluates frame accuracy, F1@{10,25,50}, and edit score.
+
+## Setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Run The Model
+
+Example (local run):
+
 ```bash
 python3 -m src.model.crossval configs/50salads.yaml
 ```
 
-Infer (per-video logits/probs to a folder):
+Example (explicit output directory):
+
 ```bash
-python scripts/ms_tcn_cli.py infer --config configs/50salads_train_split1.yaml --checkpoint outputs/50salads_train_split1/best.pt --manifest data/50salads/test.split1.jsonl --output_dir outputs/ms_tcn_infer
+python3 -m src.model.crossval configs/50salads.yaml --output_dir outputs/50salads-run
 ```
 
-Export DDTR pickle (matches `50_salads_unified.pkl` schema):
+Example (Slurm):
+
 ```bash
-python scripts/generate_ddtr_pickle.py --config configs/50salads_train_split1.yaml --checkpoint outputs/50salads_train_split1/best.pt --manifest data/50salads/test.split1.jsonl --output outputs/ddtr/50_salads_unified.pkl
+sbatch scripts/crossval_event_segmentation.sh
 ```
 
-Dry run to preview schema:
-```bash
-python scripts/generate_ddtr_pickle.py --config configs/50salads_train_split1.yaml --checkpoint outputs/50salads_train_split1/best.pt --manifest data/50salads/test.split1.jsonl --dry_run
-```
+## Config Notes
+
+- `data.splits`: use a list like `[1,2,3,4,5]` or `"all"`.
+- `training.device`: set to `cuda` or `cpu`.
+- `training.save_dir`: base path for run outputs.
+
+## Outputs
+
+Each split directory contains:
+
+- `checkpoints/` (including `best.pt`)
+- `predictions/` (`*_logits.npy`, `*_probs.npy`)
+- `eval/metrics.json` and `eval/video_metrics.jsonl`
+- `comparisons/` qualitative prediction vs. label stripe plots
