@@ -326,9 +326,15 @@ def train_model(
                 score > best_val if checkpoint_metric_higher_is_better else score < best_val
             ):
                 best_val = score
-                save_checkpoint(model, optimizer, epoch, val_metrics, out_dir / "best.pt")
+                save_checkpoint(
+                    model, optimizer, epoch, val_metrics, out_dir / "best.pt",
+                    cfg.data.feature_mean, cfg.data.feature_std
+                )
 
-        save_checkpoint(model, optimizer, epoch, train_metrics, out_dir / "last.pt")
+        save_checkpoint(
+            model, optimizer, epoch, train_metrics, out_dir / "last.pt",
+            cfg.data.feature_mean, cfg.data.feature_std
+        )
 
         if val_loader is not None:
             write_val_comparisons(
