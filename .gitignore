@@ -1,9 +1,10 @@
 configs
 data
-outputs
+outputs*
 __pycache__/
 *.pkl
 .venv/
 .vscode/
 scripts/
 logs/
+ddtr/
