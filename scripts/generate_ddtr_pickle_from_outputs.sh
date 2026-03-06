@@ -14,8 +14,8 @@ PROJECT_ROOT="/home/tal.gorbunov/projects/video-eventfulness-segmentation"
 VENV_PATH="${PROJECT_ROOT}/.venv"
 PARAMS_JSON="${PROJECT_ROOT}/configs/ddtr_pickle_from_outputs_50salads.json"
 
-PICKLE_OUTPUT_DIR="${1:-${PROJECT_ROOT}/pickle}"
-PICKLE_OUTPUT_PATH="${PICKLE_OUTPUT_DIR}/50salads_ddtr_input.pkl"
+PICKLE_OUTPUT_DIR="${1:-${PROJECT_ROOT}/pickles}"
+PICKLE_OUTPUT_PATH="${PICKLE_OUTPUT_DIR}/50salads_ddtr_input_stride_2.pkl"
 
 if [[ ! -f "${PARAMS_JSON}" ]]; then
     echo "ERROR: Missing params JSON: ${PARAMS_JSON}"
