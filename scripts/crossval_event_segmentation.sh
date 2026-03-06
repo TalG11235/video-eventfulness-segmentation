@@ -22,4 +22,4 @@ RUN_OUTPUT_DIR="${BASE_OUTPUT_DIR}-${RUN_TIME}"
 mkdir -p "${RUN_OUTPUT_DIR}"
 exec > >(tee -a "${RUN_OUTPUT_DIR}/run-${SLURM_JOB_ID:-local}.log") 2>&1
 
-python3 -m src.model.crossval "${CONFIG_PATH}" --output_dir "${RUN_OUTPUT_DIR}"
+python3 -m src.commands.crossval "${CONFIG_PATH}" --output_dir "${RUN_OUTPUT_DIR}"

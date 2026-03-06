@@ -4,7 +4,7 @@ This project trains and evaluates a temporal event segmentation model (MS-TCN) f
 
 ## The Pipeline
 
-`src.model.crossval` runs the full segmentation workflow per split:
+`src.commands.crossval` runs the full segmentation workflow per split:
 
 1. Builds split manifests from dataset metadata.
 2. Trains MS-TCN on train videos.
@@ -24,13 +24,13 @@ pip install -r requirements.txt
 Example (local run):
 
 ```bash
-python3 -m src.model.crossval configs/50salads.yaml
+python3 -m src.commands.crossval configs/50salads.yaml
 ```
 
 Example (explicit output directory):
 
 ```bash
-python3 -m src.model.crossval configs/50salads.yaml --output_dir outputs/50salads-run
+python3 -m src.commands.crossval configs/50salads.yaml --output_dir outputs/50salads-run
 ```
 
 Example (Slurm):
