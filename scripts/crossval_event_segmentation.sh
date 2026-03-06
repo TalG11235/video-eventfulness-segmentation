@@ -16,8 +16,8 @@ source .venv/bin/activate
 
 CONFIG_PATH="configs/50salads2.yaml"
 BASE_OUTPUT_DIR="$(python3 -c "import yaml; cfg=yaml.safe_load(open('${CONFIG_PATH}', 'r', encoding='utf-8')) or {}; print(cfg.get('training', {}).get('save_dir', 'outputs'))")"
-TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-RUN_OUTPUT_DIR="${BASE_OUTPUT_DIR}-${TIMESTAMP}"
+RUN_TIME="$(date +%H:%M:%S)"
+RUN_OUTPUT_DIR="${BASE_OUTPUT_DIR}-${RUN_TIME}"
 
 mkdir -p "${RUN_OUTPUT_DIR}"
 exec > >(tee -a "${RUN_OUTPUT_DIR}/run-${SLURM_JOB_ID:-local}.log") 2>&1

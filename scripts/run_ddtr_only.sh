@@ -23,7 +23,7 @@ SPLIT_ID="5"
 OUTPUT_DIR="${PROJECT_ROOT}/outputs_ddtr/${DATASET_PREFIX}"
 GENERATED_PICKLE_BASE="${PROJECT_ROOT}/outputs_ddtr/from-existing-outputs"
 # Paper-like DDTR defaults (ddtr/DDTR/config.json + comparable trace density).
-NUM_EPOCHS=1000
+NUM_EPOCHS=2000
 DDTR_BATCH_SIZE=4
 DDTR_NUM_WORKERS=8
 DDTR_NUM_TIMESTEPS=200
@@ -55,8 +55,8 @@ if [[ ! -f "${SOURCE_DDTR_PICKLE}" ]]; then
 fi
 
 mkdir -p "${PROJECT_ROOT}/logs"
-TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-RUN_DIR="${OUTPUT_DIR}/run-${TIMESTAMP}"
+RUN_TIME="$(date +%H:%M:%S)"
+RUN_DIR="${OUTPUT_DIR}/run-${RUN_TIME}"
 mkdir -p "${RUN_DIR}"
 
 DDTR_PICKLE="${RUN_DIR}/50salads_ddtr_input.pkl"
