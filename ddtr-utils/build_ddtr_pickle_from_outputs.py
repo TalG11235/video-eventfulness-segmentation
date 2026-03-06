@@ -13,6 +13,18 @@ from src.export.ddtr_format import save_as_ddtr_pickle
 from src.utils import load_config
 
 
+def _load_params_json(path: str) -> dict[str, Any]:
+    if not path:
+        return {}
+    cfg_path = Path(path)
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"--params-json does not exist: {cfg_path}")
+    payload = json.loads(cfg_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"--params-json must contain a JSON object, got {type(payload)}")
+    return payload
+
+
 def _parse_splits(raw: str) -> list[int]:
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     if not parts:
@@ -75,12 +87,20 @@ def parse_args() -> argparse.Namespace:
             "running split-wise inference on each split val manifest (OOF predictions)."
         )
     )
-    parser.add_argument("--outputs-dir", required=True, help="Existing outputs dir, e.g. outputs/50salads-...")
+    parser.add_argument(
+        "--params-json",
+        default="",
+        help=(
+            "Optional JSON config for parameters (outputs_dir, splits, temporal_stride, "
+            "expected_videos, device). CLI args override JSON values."
+        ),
+    )
+    parser.add_argument("--outputs-dir", default="", help="Existing outputs dir, e.g. outputs/50salads-...")
     parser.add_argument("--ddtr-pickle-path", required=True, help="Output DDTR pickle path")
-    parser.add_argument("--splits", default="1,2,3,4,5", help="Comma-separated split ids")
+    parser.add_argument("--splits", default="", help="Comma-separated split ids")
     parser.add_argument("--device", default="", help="Optional inference device override")
-    parser.add_argument("--temporal-stride", type=int, default=1, help="Downsample factor for probs/labels")
-    parser.add_argument("--expected-videos", type=int, default=50, help="Expected total OOF videos")
+    parser.add_argument("--temporal-stride", type=int, default=None, help="Downsample factor for probs/labels")
+    parser.add_argument("--expected-videos", type=int, default=None, help="Expected total OOF videos")
     parser.add_argument(
         "--trace-index-path",
         default="",
@@ -91,19 +111,48 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional summary JSON path",
     )
+    parser.add_argument(
+        "--no-sidecars",
+        action="store_true",
+        help="If set, do not write trace index and summary JSON sidecar files.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    splits = _parse_splits(args.splits)
-    outputs_dir = Path(args.outputs_dir)
+    params = _load_params_json(args.params_json)
+
+    outputs_dir_raw = args.outputs_dir or str(params.get("outputs_dir", ""))
+    if not outputs_dir_raw:
+        raise ValueError("Missing outputs dir. Provide --outputs-dir or outputs_dir in --params-json")
+    outputs_dir = Path(outputs_dir_raw)
     if not outputs_dir.exists():
         raise FileNotFoundError(f"--outputs-dir does not exist: {outputs_dir}")
-    if args.temporal_stride < 1:
+
+    if args.splits:
+        splits = _parse_splits(args.splits)
+    else:
+        raw_splits = params.get("splits", "1,2,3,4,5")
+        if isinstance(raw_splits, list):
+            splits = [int(x) for x in raw_splits]
+            if any(s <= 0 for s in splits):
+                raise ValueError(f"splits in --params-json must be positive integers, got {splits}")
+        else:
+            splits = _parse_splits(str(raw_splits))
+
+    temporal_stride = (
+        args.temporal_stride if args.temporal_stride is not None else int(params.get("temporal_stride", 1))
+    )
+    expected_videos = (
+        args.expected_videos if args.expected_videos is not None else int(params.get("expected_videos", 50))
+    )
+    device_override = args.device if args.device else str(params.get("device", ""))
+
+    if temporal_stride < 1:
         raise ValueError("--temporal-stride must be >= 1")
 
-    device = args.device or None
+    device = device_override or None
     all_predictions: list[dict[str, Any]] = []
     trace_rows: list[dict[str, Any]] = []
     video_to_split: dict[str, int] = {}
@@ -146,7 +195,7 @@ def main() -> None:
                 )
             video_to_split[video_id] = split_idx
 
-            out_item = _apply_stride_to_item(item, args.temporal_stride)
+            out_item = _apply_stride_to_item(item, temporal_stride)
             probs = np.asarray(out_item["probs"])
             if probs.ndim != 2:
                 raise ValueError(f"Invalid probs shape for {video_id}: {probs.shape}")
@@ -167,7 +216,7 @@ def main() -> None:
                     "manifest_path": str(val_manifest_path),
                     "num_frames": int(probs.shape[0]),
                     "num_classes": int(probs.shape[1]),
-                    "temporal_stride": args.temporal_stride,
+                    "temporal_stride": temporal_stride,
                 }
             )
 
@@ -179,9 +228,9 @@ def main() -> None:
     all_predictions.sort(key=lambda x: str(x["video_id"]))
     trace_rows.sort(key=lambda x: str(x["video_id"]))
 
-    if args.expected_videos > 0 and len(all_predictions) != args.expected_videos:
+    if expected_videos > 0 and len(all_predictions) != expected_videos:
         raise ValueError(
-            f"Expected {args.expected_videos} videos, got {len(all_predictions)} from splits={splits}"
+            f"Expected {expected_videos} videos, got {len(all_predictions)} from splits={splits}"
         )
 
     if first_config_path is None:
@@ -193,33 +242,36 @@ def main() -> None:
         output_path=args.ddtr_pickle_path,
     )
 
-    trace_index_path = (
-        Path(args.trace_index_path)
-        if args.trace_index_path
-        else Path(args.ddtr_pickle_path).with_suffix(".trace_index.jsonl")
-    )
-    trace_index_path.parent.mkdir(parents=True, exist_ok=True)
-    with trace_index_path.open("w", encoding="utf-8") as handle:
-        for row in trace_rows:
-            handle.write(json.dumps(row) + "\n")
-
     summary = {
         "outputs_dir": str(outputs_dir),
         "splits": splits,
-        "expected_videos": args.expected_videos,
+        "expected_videos": expected_videos,
         "collected_videos": len(all_predictions),
-        "temporal_stride": args.temporal_stride,
-        "device_override": args.device,
+        "temporal_stride": temporal_stride,
+        "device_override": device_override,
         "ddtr_export": export_result,
-        "trace_index_path": str(trace_index_path),
+        "params_json": args.params_json,
     }
-    summary_path = (
-        Path(args.summary_path)
-        if args.summary_path
-        else Path(args.ddtr_pickle_path).with_suffix(".summary.json")
-    )
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    if not args.no_sidecars:
+        trace_index_path = (
+            Path(args.trace_index_path)
+            if args.trace_index_path
+            else Path(args.ddtr_pickle_path).with_suffix(".trace_index.jsonl")
+        )
+        trace_index_path.parent.mkdir(parents=True, exist_ok=True)
+        with trace_index_path.open("w", encoding="utf-8") as handle:
+            for row in trace_rows:
+                handle.write(json.dumps(row) + "\n")
+        summary["trace_index_path"] = str(trace_index_path)
+
+        summary_path = (
+            Path(args.summary_path)
+            if args.summary_path
+            else Path(args.ddtr_pickle_path).with_suffix(".summary.json")
+        )
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print("Done.")
     print(json.dumps(summary, indent=2))
