@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from .fiftysalads import prepare_split_manifests as prepare_fiftysalads_split_manifests
+from .base import DatasetConverter
+from .fiftysalads import FiftySaladsConverter
 
-SplitManifestPreparer = Callable[[dict[str, Any], int, Path], None]
+_CONVERTER_INSTANCES: tuple[DatasetConverter, ...] = (FiftySaladsConverter(),)
 
-_CONVERTERS: dict[str, SplitManifestPreparer] = {
-    "50salads": prepare_fiftysalads_split_manifests,
-    "50_salads": prepare_fiftysalads_split_manifests,
-}
+_CONVERTERS: dict[str, DatasetConverter] = {}
+for _converter in _CONVERTER_INSTANCES:
+    for _dataset_name in _converter.dataset_names:
+        normalized_name = _dataset_name.strip().lower()
+        if normalized_name in _CONVERTERS:
+            raise ValueError(f"Duplicate converter registration for dataset {normalized_name!r}")
+        _CONVERTERS[normalized_name] = _converter
 
 
 def prepare_split_manifests(cfg_split: dict[str, Any], split_idx: int, split_out_dir: Path) -> None:
@@ -25,7 +29,7 @@ def prepare_split_manifests(cfg_split: dict[str, Any], split_idx: int, split_out
             f"No dataset converter registered for {dataset_name!r}. Available converters: {known}"
         )
 
-    _CONVERTERS[dataset_name](cfg_split, split_idx, split_out_dir)
+    _CONVERTERS[dataset_name].prepare_split_manifests(cfg_split, split_idx, split_out_dir)
 
 
-__all__ = ["prepare_split_manifests"]
+__all__ = ["DatasetConverter", "prepare_split_manifests"]

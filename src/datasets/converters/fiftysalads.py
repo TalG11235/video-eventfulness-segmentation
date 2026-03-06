@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .base import DatasetConverter
+
 
 def _load_label_mapping(mapping_path: Path) -> dict[str, int]:
     mapping: dict[str, int] = {}
@@ -81,48 +83,64 @@ def _write_manifest(
             handle.write(json.dumps(item) + "\n")
 
 
+class FiftySaladsConverter(DatasetConverter):
+    dataset_names: tuple[str, ...] = ("50salads", "50_salads")
+
+    def prepare_split_manifests(
+        self, cfg_split: dict[str, Any], split_idx: int, split_out_dir: Path
+    ) -> None:
+        data_cfg = cfg_split.setdefault("data", {})
+        model_cfg = cfg_split.setdefault("model", {})
+        data_dir = Path(data_cfg.get("data_dir", "data/50salads"))
+        features_dir = data_dir / "features"
+        ground_truth_dir = data_dir / "groundTruth"
+        splits_dir = data_dir / "splits"
+        mapping_path = data_dir / "mapping.txt"
+
+        train_bundle = splits_dir / f"train.split{split_idx}.bundle"
+        val_bundle = splits_dir / f"test.split{split_idx}.bundle"
+        required = [features_dir, ground_truth_dir, train_bundle, val_bundle, mapping_path]
+        missing = [str(path) for path in required if not path.exists()]
+        if missing:
+            raise FileNotFoundError(
+                "Missing required 50Salads files for manifest generation: " + ", ".join(missing)
+            )
+
+        label_to_idx = _load_label_mapping(mapping_path)
+        inferred_num_classes = max(label_to_idx.values()) + 1 if label_to_idx else 0
+        configured_num_classes = model_cfg.get("num_classes")
+        if (
+            configured_num_classes is not None
+            and int(configured_num_classes) != inferred_num_classes
+        ):
+            raise ValueError(
+                "Configured model.num_classes does not match 50Salads mapping.txt: "
+                f"got {configured_num_classes}, inferred {inferred_num_classes}"
+            )
+        model_cfg["num_classes"] = inferred_num_classes
+
+        train_ids = _read_split_video_ids(train_bundle)
+        val_ids = _read_split_video_ids(val_bundle)
+
+        manifests_dir = split_out_dir / "manifests"
+        labels_dir = split_out_dir / "labels"
+        train_manifest = manifests_dir / "train.jsonl"
+        val_manifest = manifests_dir / "val.jsonl"
+
+        _write_manifest(
+            train_ids, features_dir, ground_truth_dir, labels_dir, label_to_idx, train_manifest
+        )
+        _write_manifest(
+            val_ids, features_dir, ground_truth_dir, labels_dir, label_to_idx, val_manifest
+        )
+
+        data_cfg["manifest_train"] = str(train_manifest)
+        data_cfg["manifest_val"] = str(val_manifest)
+        data_cfg["manifest_test"] = str(val_manifest)
+
+
+_CONVERTER = FiftySaladsConverter()
+
+
 def prepare_split_manifests(cfg_split: dict[str, Any], split_idx: int, split_out_dir: Path) -> None:
-    data_cfg = cfg_split.setdefault("data", {})
-    model_cfg = cfg_split.setdefault("model", {})
-    data_dir = Path(data_cfg.get("data_dir", "data/50salads"))
-    features_dir = data_dir / "features"
-    ground_truth_dir = data_dir / "groundTruth"
-    splits_dir = data_dir / "splits"
-    mapping_path = data_dir / "mapping.txt"
-
-    train_bundle = splits_dir / f"train.split{split_idx}.bundle"
-    val_bundle = splits_dir / f"test.split{split_idx}.bundle"
-    required = [features_dir, ground_truth_dir, train_bundle, val_bundle, mapping_path]
-    missing = [str(path) for path in required if not path.exists()]
-    if missing:
-        raise FileNotFoundError(
-            "Missing required 50Salads files for manifest generation: " + ", ".join(missing)
-        )
-
-    label_to_idx = _load_label_mapping(mapping_path)
-    inferred_num_classes = max(label_to_idx.values()) + 1 if label_to_idx else 0
-    configured_num_classes = model_cfg.get("num_classes")
-    if (
-        configured_num_classes is not None
-        and int(configured_num_classes) != inferred_num_classes
-    ):
-        raise ValueError(
-            "Configured model.num_classes does not match 50Salads mapping.txt: "
-            f"got {configured_num_classes}, inferred {inferred_num_classes}"
-        )
-    model_cfg["num_classes"] = inferred_num_classes
-
-    train_ids = _read_split_video_ids(train_bundle)
-    val_ids = _read_split_video_ids(val_bundle)
-
-    manifests_dir = split_out_dir / "manifests"
-    labels_dir = split_out_dir / "labels"
-    train_manifest = manifests_dir / "train.jsonl"
-    val_manifest = manifests_dir / "val.jsonl"
-
-    _write_manifest(train_ids, features_dir, ground_truth_dir, labels_dir, label_to_idx, train_manifest)
-    _write_manifest(val_ids, features_dir, ground_truth_dir, labels_dir, label_to_idx, val_manifest)
-
-    data_cfg["manifest_train"] = str(train_manifest)
-    data_cfg["manifest_val"] = str(val_manifest)
-    data_cfg["manifest_test"] = str(val_manifest)
+    _CONVERTER.prepare_split_manifests(cfg_split, split_idx, split_out_dir)
